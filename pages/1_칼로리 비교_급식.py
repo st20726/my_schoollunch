@@ -1,14 +1,15 @@
+```python
 import streamlit as st
 import requests
+import re
+import html
 from datetime import datetime
 from zoneinfo import ZoneInfo
-import html
-import re
 
 
-# --------------------------------------------------
+# ==================================================
 # 페이지 설정
-# --------------------------------------------------
+# ==================================================
 
 st.set_page_config(
     page_title="우리 학교와 다른 학교와의 칼로리 비교",
@@ -17,80 +18,79 @@ st.set_page_config(
 )
 
 st.title("우리 학교와 다른 학교와의 칼로리 비교")
-st.write("송탄고등학교와 평택지역 학교의 같은 날 중식 칼로리를 비교해 보세요.")
+st.write("송탄고등학교와 평택지역 고등학교의 중식 칼로리를 비교해 봅니다.")
 
 
-# --------------------------------------------------
+# ==================================================
 # NEIS API
-# --------------------------------------------------
+# ==================================================
 
 MEAL_API_URL = "https://open.neis.go.kr/hub/mealServiceDietInfo"
 
 # 경기도교육청
 OFFICE_CODE = "J10"
 
-# 송탄고등학교
-SONGTAN_HIGH_CODE = "7530480"
 
-
-# --------------------------------------------------
-# 평택지역 비교 학교
-# --------------------------------------------------
-# 학교 이름과 NEIS 학교 코드를 고정해 둔다.
-# 필요하면 이 목록에 학교를 추가할 수 있다.
+# ==================================================
+# 평택지역 고등학교
 #
-# 모든 학교는 경기도교육청(J10) 소속으로 설정한다.
-# --------------------------------------------------
+# 학교 코드:
+# 송탄고등학교      7530480
+# 평택고등학교      7530132
+# 신한고등학교      7530179
+# 한광고등학교      7530215
+# 평택여자고등학교 7530578
+# 이충고등학교      7530891
+# 태광고등학교      7530600
+# 진위고등학교      7530595
+# 안중고등학교      7530594
+# 현화고등학교      7530819
+# 효명고등학교      7530601
+# 한국관광고등학교 7530488
+# ==================================================
 
-COMPARISON_SCHOOLS = {
-    "송탄고등학교": {
-        "office_code": "J10",
-        "school_code": "7530480"
-    },
-
-    # 비교 학교
-    # 아래 학교들은 학교 코드가 바뀌지 않는 한 그대로 사용할 수 있다.
-    "평택고등학교": {
-        "office_code": "J10",
-        "school_code": "7530540"
-    },
-
-    "한광고등학교": {
-        "office_code": "J10",
-        "school_code": "7530539"
-    },
-
-    "신한고등학교": {
-        "office_code": "J10",
-        "school_code": "7530538"
-    }
+SCHOOLS = {
+    "송탄고등학교": "7530480",
+    "평택고등학교": "7530132",
+    "신한고등학교": "7530179",
+    "한광고등학교": "7530215",
+    "평택여자고등학교": "7530578",
+    "이충고등학교": "7530891",
+    "태광고등학교": "7530600",
+    "진위고등학교": "7530595",
+    "안중고등학교": "7530594",
+    "현화고등학교": "7530819",
+    "효명고등학교": "7530601",
+    "한국관광고등학교": "7530488",
 }
 
 
-# --------------------------------------------------
+# ==================================================
 # 한국 시간
-# --------------------------------------------------
+# ==================================================
 
 KST = ZoneInfo("Asia/Seoul")
-today_kst = datetime.now(KST).date()
+TODAY = datetime.now(KST).date()
 
 
-# --------------------------------------------------
-# 급식 API 결과의 RESULT 코드 확인
-# --------------------------------------------------
+# ==================================================
+# 급식 API에서 RESULT 코드 확인
+# ==================================================
 
 def get_result_code(data):
-    try:
-        if "mealServiceDietInfo" not in data:
-            return None
 
-        blocks = data["mealServiceDietInfo"]
+    try:
+        blocks = data.get("mealServiceDietInfo", [])
 
         for block in blocks:
-            if "head" in block:
-                for item in block["head"]:
-                    if "RESULT" in item:
-                        return item["RESULT"].get("CODE")
+
+            if "head" not in block:
+                continue
+
+            for item in block["head"]:
+
+                if "RESULT" in item:
+                    return item["RESULT"].get("CODE")
 
     except Exception:
         pass
@@ -98,28 +98,28 @@ def get_result_code(data):
     return None
 
 
-# --------------------------------------------------
+# ==================================================
 # 급식 조회
-# --------------------------------------------------
+# ==================================================
 
 @st.cache_data(ttl=3600)
-def get_meal(office_code, school_code, date_string):
-    """
-    선택한 학교의 선택 날짜 중식만 조회한다.
-    """
+def get_meal(school_code, date_string):
 
     params = {
         "Type": "json",
-        "ATPT_OFCDC_SC_CODE": office_code,
+        "ATPT_OFCDC_SC_CODE": OFFICE_CODE,
         "SD_SCHUL_CODE": school_code,
         "MMEAL_SC_CODE": "2",
         "MLSV_FROM_YMD": date_string,
         "MLSV_TO_YMD": date_string,
-        "pSize": "1000",
-        "pIndex": "1"
+
+        # 하루만 조회하므로 충분한 크기
+        "pSize": "10",
+        "pIndex": "1",
     }
 
     try:
+
         response = requests.get(
             MEAL_API_URL,
             params=params,
@@ -127,6 +127,7 @@ def get_meal(office_code, school_code, date_string):
         )
 
         response.raise_for_status()
+
         data = response.json()
 
     except requests.RequestException:
@@ -135,89 +136,105 @@ def get_meal(office_code, school_code, date_string):
     except ValueError:
         return None, "json"
 
-    # 급식 데이터가 없는 경우
+    # ----------------------------------------------
+    # 급식 데이터 없음
+    # ----------------------------------------------
+
     result_code = get_result_code(data)
 
     if result_code == "INFO-200":
         return None, "empty"
 
+    # ----------------------------------------------
+    # row 가져오기
+    # ----------------------------------------------
+
     try:
+
         rows = data["mealServiceDietInfo"][1]["row"]
+
     except (KeyError, IndexError, TypeError):
+
         return None, "empty"
 
     if not rows:
         return None, "empty"
 
-    # 선택 날짜와 일치하는 급식 찾기
+    # ----------------------------------------------
+    # 선택한 날짜의 중식 찾기
+    # ----------------------------------------------
+
     for row in rows:
-        if row.get("MLSV_YMD") == date_string:
+
+        if (
+            row.get("MLSV_YMD") == date_string
+            and row.get("MMEAL_SC_CODE") == "2"
+        ):
+
             return row, "success"
 
     return None, "empty"
 
 
-# --------------------------------------------------
-# 메뉴 HTML 정리
-# --------------------------------------------------
+# ==================================================
+# 칼로리 숫자만 추출
+# ==================================================
 
-def format_menu(menu):
-    """
-    NEIS의 <br/>로 구분된 메뉴를 줄바꿈해서 표시한다.
-    알레르기 번호는 원래 데이터 그대로 유지한다.
-    """
-
-    if not menu:
-        return "등록된 메뉴가 없습니다."
-
-    menu = html.escape(menu)
-
-    menu = re.sub(
-        r"&lt;br\s*/?&gt;",
-        "<br>",
-        menu,
-        flags=re.IGNORECASE
-    )
-
-    return menu
-
-
-# --------------------------------------------------
-# 칼로리 숫자 추출
-# --------------------------------------------------
-
-def extract_calories(cal_info):
-    """
-    CAL_INFO에서 숫자를 찾아 비교용 숫자로 반환한다.
-
-    예:
-    '780.45 Kcal' -> 780.45
-    """
+def get_calorie_number(cal_info):
 
     if not cal_info:
         return None
 
-    match = re.search(r"[\d.]+", str(cal_info))
+    # 예: "812.4 Kcal"
+    match = re.search(
+        r"([0-9]+(?:\.[0-9]+)?)",
+        str(cal_info)
+    )
 
     if match:
+
         try:
-            return float(match.group())
+            return float(match.group(1))
+
         except ValueError:
             return None
 
     return None
 
 
-# --------------------------------------------------
+# ==================================================
+# 메뉴 표시
+# ==================================================
+
+def make_menu_html(menu):
+
+    if not menu:
+        return "등록된 메뉴가 없습니다."
+
+    # HTML 특수문자 처리
+    safe_menu = html.escape(str(menu))
+
+    # NEIS의 <br/>를 줄바꿈으로 변경
+    safe_menu = re.sub(
+        r"&lt;br\s*/?&gt;",
+        "<br>",
+        safe_menu,
+        flags=re.IGNORECASE
+    )
+
+    return safe_menu
+
+
+# ==================================================
 # 날짜 선택
-# --------------------------------------------------
+# ==================================================
 
 st.subheader("📅 날짜 선택")
 
 selected_date = st.date_input(
     "비교할 날짜를 선택하세요.",
-    value=today_kst,
-    max_value=today_kst,
+    value=TODAY,
+    max_value=TODAY,
     format="YYYY-MM-DD"
 )
 
@@ -228,92 +245,113 @@ st.caption(
 )
 
 
-# --------------------------------------------------
-# 모든 학교의 급식 조회
-# --------------------------------------------------
-
-meal_results = {}
-
-for school_name, school_info in COMPARISON_SCHOOLS.items():
-
-    meal, status = get_meal(
-        school_info["office_code"],
-        school_info["school_code"],
-        date_string
-    )
-
-    meal_results[school_name] = {
-        "meal": meal,
-        "status": status
-    }
-
-
-# --------------------------------------------------
-# 송탄고등학교 급식 카드
-# --------------------------------------------------
+# ==================================================
+# 송탄고등학교 급식
+# ==================================================
 
 st.divider()
 
-st.subheader("🍚 송탄고등학교 중식")
+st.subheader("🍚 송탄고등학교")
 
-songtan_result = meal_results["송탄고등학교"]
+songtan_meal, songtan_status = get_meal(
+    SCHOOLS["송탄고등학교"],
+    date_string
+)
 
-if songtan_result["status"] == "empty":
+
+# ==================================================
+# 송탄고 급식이 없는 경우
+# ==================================================
+
+if songtan_status == "empty":
 
     st.info("급식이 없는 날입니다")
 
-elif songtan_result["status"] == "network":
 
-    st.error("급식 정보를 불러오지 못했습니다.")
+elif songtan_status == "network":
 
-elif songtan_result["status"] == "json":
+    st.error(
+        "급식 정보를 불러오지 못했습니다. "
+        "잠시 후 다시 시도해 주세요."
+    )
 
-    st.error("급식 정보의 응답을 읽지 못했습니다.")
 
-elif songtan_result["status"] == "success":
+elif songtan_status == "json":
 
-    meal = songtan_result["meal"]
+    st.error(
+        "급식 정보의 응답을 읽지 못했습니다."
+    )
 
-    menu = meal.get("DDISH_NM", "")
-    calories = meal.get("CAL_INFO", "")
-    origin = meal.get("ORPLC_INFO", "")
 
-    # 송탄고 카드
+# ==================================================
+# 송탄고 급식 카드
+# ==================================================
+
+elif songtan_status == "success":
+
+    menu = songtan_meal.get("DDISH_NM", "")
+    calorie = songtan_meal.get("CAL_INFO", "")
+    origin = songtan_meal.get("ORPLC_INFO", "")
+
     st.markdown(
         f"""
         <div style="
-            border: 1px solid #d9d9d9;
-            border-radius: 15px;
+            border: 1px solid #dddddd;
+            border-radius: 16px;
             padding: 25px;
+            margin-top: 10px;
             margin-bottom: 20px;
-            background-color: #fafafa;
+            background-color: #ffffff;
         ">
 
             <h2 style="margin-top: 0;">
                 🏫 송탄고등학교
             </h2>
 
-            <h4>
-                🍚 중식
-            </h4>
+            <p style="
+                color: #666666;
+                margin-bottom: 20px;
+            ">
+                {selected_date.strftime('%Y년 %m월 %d일')} 중식
+            </p>
+
+            <h3>🍚 메뉴</h3>
 
             <div style="
-                font-size: 17px;
-                line-height: 1.9;
-                margin-bottom: 18px;
+                font-size: 18px;
+                line-height: 2;
+                padding: 15px;
+                background-color: #f7f7f7;
+                border-radius: 10px;
             ">
-                {format_menu(menu)}
+                {make_menu_html(menu)}
             </div>
 
-            <hr>
+            <br>
 
-            <p style="font-size: 18px;">
-                🔥 <b>칼로리</b> : {html.escape(str(calories))}
-            </p>
+            <h3>🔥 칼로리</h3>
 
-            <p style="font-size: 14px; color: #666;">
-                원산지 : {html.escape(str(origin)) if origin else "정보 없음"}
-            </p>
+            <div style="
+                font-size: 28px;
+                font-weight: bold;
+            ">
+                {html.escape(str(calorie))}
+            </div>
+
+            <br>
+
+            <details>
+                <summary>원산지 보기</summary>
+
+                <div style="
+                    margin-top: 10px;
+                    line-height: 1.8;
+                    color: #555555;
+                ">
+                    {make_menu_html(origin)}
+                </div>
+
+            </details>
 
         </div>
         """,
@@ -321,89 +359,150 @@ elif songtan_result["status"] == "success":
     )
 
 
-# --------------------------------------------------
-# 학교별 칼로리 비교
-# --------------------------------------------------
+# ==================================================
+# 평택지역 학교 급식 조회
+# ==================================================
 
 st.divider()
 
-st.subheader("📊 평택지역 학교와 칼로리 비교")
-
-comparison_data = []
-
-for school_name, result in meal_results.items():
-
-    meal = result["meal"]
-
-    if result["status"] == "success" and meal:
-
-        calories_text = meal.get("CAL_INFO", "")
-        calories_number = extract_calories(calories_text)
-
-        comparison_data.append({
-            "학교": school_name,
-            "칼로리": calories_number,
-            "칼로리_표시": calories_text
-        })
+st.subheader("📊 평택지역 학교 칼로리 비교")
 
 
-# --------------------------------------------------
-# 비교 가능한 학교가 없는 경우
-# --------------------------------------------------
+comparison = []
+no_meal_schools = []
 
-if not comparison_data:
 
-    st.info("이 날짜에는 비교할 수 있는 학교의 급식이 없습니다.")
+for school_name, school_code in SCHOOLS.items():
+
+    meal, status = get_meal(
+        school_code,
+        date_string
+    )
+
+    # ----------------------------------------------
+    # 급식이 없는 학교
+    # ----------------------------------------------
+
+    if status == "empty":
+
+        no_meal_schools.append(school_name)
+
+        continue
+
+    # ----------------------------------------------
+    # 정상적인 급식
+    # ----------------------------------------------
+
+    if status == "success" and meal:
+
+        calorie_text = meal.get(
+            "CAL_INFO",
+            ""
+        )
+
+        calorie_number = get_calorie_number(
+            calorie_text
+        )
+
+        if calorie_number is not None:
+
+            comparison.append({
+                "학교": school_name,
+                "칼로리": calorie_number,
+                "칼로리표시": calorie_text
+            })
+
+
+# ==================================================
+# 비교 결과가 없는 경우
+# ==================================================
+
+if not comparison:
+
+    st.info("이 날짜에는 비교할 수 있는 급식 정보가 없습니다.")
+
 
 else:
 
-    # 칼로리 숫자가 없는 학교 제거
-    comparison_data = [
-        item
-        for item in comparison_data
-        if item["칼로리"] is not None
-    ]
+    # ==================================================
+    # 칼로리 순으로 정렬
+    # ==================================================
 
-    if comparison_data:
+    comparison.sort(
+        key=lambda x: x["칼로리"],
+        reverse=True
+    )
 
-        # 가장 높은 칼로리부터 정렬
-        comparison_data = sorted(
-            comparison_data,
-            key=lambda x: x["칼로리"],
-            reverse=True
+
+    # ==================================================
+    # 막대그래프
+    # ==================================================
+
+    chart_data = {
+        item["학교"]: item["칼로리"]
+        for item in comparison
+    }
+
+    st.bar_chart(chart_data)
+
+
+    # ==================================================
+    # 학교별 칼로리 카드
+    # ==================================================
+
+    st.subheader("학교별 칼로리")
+
+    # 한 줄에 최대 3개
+    for start in range(
+        0,
+        len(comparison),
+        3
+    ):
+
+        row = comparison[
+            start:start + 3
+        ]
+
+        columns = st.columns(
+            len(row)
         )
 
-        # 막대그래프
-        chart_data = {
-            item["학교"]: item["칼로리"]
-            for item in comparison_data
-        }
-
-        st.bar_chart(chart_data)
-
-        st.caption(
-            "※ 그래프의 칼로리는 NEIS에 등록된 해당 날짜의 중식 칼로리입니다."
-        )
-
-        # 학교별 카드
-        columns = st.columns(len(comparison_data))
-
-        for column, item in zip(columns, comparison_data):
+        for column, item in zip(
+            columns,
+            row
+        ):
 
             with column:
+
+                is_songtan = (
+                    item["학교"] == "송탄고등학교"
+                )
+
+                border = (
+                    "#4CAF50"
+                    if is_songtan
+                    else "#dddddd"
+                )
+
+                background = (
+                    "#f0fff0"
+                    if is_songtan
+                    else "#ffffff"
+                )
 
                 st.markdown(
                     f"""
                     <div style="
-                        border: 1px solid #dddddd;
-                        border-radius: 12px;
-                        padding: 18px;
+                        border: 2px solid {border};
+                        border-radius: 14px;
+                        padding: 20px;
+                        margin-bottom: 15px;
+                        background-color: {background};
                         text-align: center;
-                        min-height: 150px;
                     ">
 
                         <div style="
-                            font-size: 17px;
+                            font-size: 18px;
                             font-weight: bold;
                             margin-bottom: 15px;
                         ">
@@ -411,15 +510,14 @@ else:
                         </div>
 
                         <div style="
-                            font-size: 28px;
+                            font-size: 30px;
                             font-weight: bold;
                         ">
                             {item["칼로리"]:,.1f}
                         </div>
 
                         <div style="
-                            font-size: 14px;
-                            color: #666;
+                            color: #777777;
                             margin-top: 5px;
                         ">
                             kcal
@@ -430,40 +528,28 @@ else:
                     unsafe_allow_html=True
                 )
 
-    else:
 
-        st.info(
-            "이 날짜에는 칼로리 정보가 등록된 학교가 없습니다."
-        )
-
-
-# --------------------------------------------------
-# 급식이 없는 비교 학교 안내
-# --------------------------------------------------
-
-no_meal_schools = []
-
-for school_name, result in meal_results.items():
-
-    if result["status"] == "empty":
-        no_meal_schools.append(school_name)
+# ==================================================
+# 급식이 없는 학교 안내
+# ==================================================
 
 if no_meal_schools:
 
-    st.markdown("")
+    st.divider()
 
-    st.info(
-        "급식이 없는 학교: "
+    st.caption(
+        "이 날짜에 급식이 없는 학교: "
         + ", ".join(no_meal_schools)
     )
 
 
-# --------------------------------------------------
+# ==================================================
 # 안내
-# --------------------------------------------------
+# ==================================================
 
 st.divider()
 
 st.caption(
     "급식 정보 출처: 나이스 교육정보 개방 포털"
 )
+```
