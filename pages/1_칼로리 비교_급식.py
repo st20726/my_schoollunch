@@ -1,4 +1,4 @@
-```python
+
 import streamlit as st
 import requests
 import re
@@ -552,4 +552,4 @@ st.divider()
 st.caption(
     "급식 정보 출처: 나이스 교육정보 개방 포털"
 )
-```
+
